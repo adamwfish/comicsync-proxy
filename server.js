@@ -88,4 +88,58 @@ app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name
   res.json({ results });
 });
 
+// Fetch store categories
+app.get("/categories", async (req, res) => {
+  if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
+  try {
+    // Squarespace stores categories as product tags at the store level
+    // We fetch all products and collect unique categories
+    let categories = [];
+    let cursor = null;
+
+    do {
+      const url = cursor
+        ? `https://api.squarespace.com/1.0/commerce/products?cursor=${cursor}&pageSize=100`
+        : `https://api.squarespace.com/1.0/commerce/products?pageSize=100`;
+
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: data.message || JSON.stringify(data) });
+
+      for (const product of data.products || []) {
+        for (const tag of product.tags || []) {
+          if (!categories.includes(tag)) categories.push(tag);
+        }
+      }
+      cursor = data.pagination?.nextPageCursor || null;
+    } while (cursor);
+
+    categories.sort();
+    res.json({ categories });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Fetch store page categories (navigation categories)
+app.get("/store-categories", async (req, res) => {
+  if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
+  const { storePageId } = req.query;
+  if (!storePageId) return res.status(400).json({ error: "storePageId required" });
+  try {
+    const r = await fetch(
+      `https://api.squarespace.com/1.0/commerce/store_pages/${storePageId}/categories`,
+      { headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" } }
+    );
+    const data = await r.json();
+    if (!r.ok) return res.status(r.status).json({ error: data.message || JSON.stringify(data) });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
 app.listen(PORT, () => console.log(`ComicSync proxy running on port ${PORT}`));
