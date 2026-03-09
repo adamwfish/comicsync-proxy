@@ -157,7 +157,7 @@ app.get('/search-products', async (req, res) => {
     return res.status(400).json({ error: 'Missing query parameter: q' });
   }
 
-  const SQSP_KEY = process.env.SQSP_KEY;
+  const SQSP_KEY = process.env.SQUARESPACE_API_KEY;
   const headers = {
     'Authorization': `Bearer ${SQSP_KEY}`,
     'User-Agent': 'ComicSync-Proxy/1.0'
