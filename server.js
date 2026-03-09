@@ -140,6 +140,101 @@ app.get("/store-categories", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ─── ADD THIS TO server.js (comicsync-proxy) ──────────────────────────────────
+// Place it after your existing /categories route, before app.listen()
+//
+// This endpoint lets ComicSync search your Squarespace store inventory
+// for reprint label lookup. Supports SKU-first, title fallback.
+//
+// Usage:
+//   GET /search-products?q=030925-1430&mode=sku
+//   GET /search-products?q=Amazing+Spider-Man&mode=title
 
+app.get('/search-products', async (req, res) => {
+  const { q, mode } = req.query;
 
+  if (!q) {
+    return res.status(400).json({ error: 'Missing query parameter: q' });
+  }
+
+  const SQSP_KEY = process.env.SQSP_KEY;
+  const headers = {
+    'Authorization': `Bearer ${SQSP_KEY}`,
+    'User-Agent': 'ComicSync-Proxy/1.0'
+  };
+
+  try {
+    // Squarespace Products API — paginate up to 200 products
+    // (increase limit or add cursor loop if your store grows larger)
+    const apiUrl = `https://api.squarespace.com/1.0/commerce/products?limit=200`;
+    const response = await fetch(apiUrl, { headers });
+
+    if (!response.ok) {
+      const err = await response.text();
+      return res.status(response.status).json({ error: `Squarespace API error: ${err}` });
+    }
+
+    const data = await response.json();
+    const allProducts = data.products || [];
+
+    let matches = [];
+
+    if (mode === 'sku') {
+      // SKU match: check each product's variants for a matching variantSku
+      matches = allProducts.filter(product => {
+        const variants = product.variants || [];
+        return variants.some(v => {
+          const sku = (v.sku || v.variantSku || '').toLowerCase();
+          return sku === q.toLowerCase();
+        });
+      });
+    } else {
+      // Title match: case-insensitive substring search on product name
+      const needle = q.toLowerCase();
+      matches = allProducts.filter(product => {
+        const name = (product.name || '').toLowerCase();
+        return name.includes(needle);
+      });
+    }
+
+    // Shape the response for ComicSync's printReprintLabel()
+    const products = matches.map(p => {
+      const variant = (p.variants || [])[0] || {};
+      const price = variant.pricing?.basePrice?.value || '0.00';
+      const sku = variant.sku || variant.variantSku || '';
+
+      // Pull structured data out of tags if present
+      // Tags format from ComicSync: ["1988", "Bronze Age", "Superhero", "Marvel Comics", ...]
+      const tags = p.tags || [];
+      const year = tags.find(t => /^\d{4}$/.test(t)) || '';
+      const publisher = tags.find(t =>
+        ['Marvel', 'DC', 'Dell', 'Charlton', 'Harvey', 'Archie', 'ACG', 'EC', 'Atlas',
+         'Gold Key', 'Quality', 'Fiction House', 'Fawcett', 'Street & Smith']
+          .some(pub => t.toLowerCase().includes(pub.toLowerCase()))
+      ) || '';
+
+      return {
+        id: p.id,
+        name: p.name || '',
+        sku,
+        price,
+        year,
+        publisher,
+        tags,
+        // Pass through raw so the app can extract anything else it needs
+        _raw: {
+          isVisible: p.isVisible,
+          createdOn: p.createdOn,
+          modifiedOn: p.modifiedOn,
+        }
+      };
+    });
+
+    res.json({ products, total: products.length });
+
+  } catch (err) {
+    console.error('/search-products error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 app.listen(PORT, () => console.log(`ComicSync proxy running on port ${PORT}`));
