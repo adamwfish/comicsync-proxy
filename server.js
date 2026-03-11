@@ -31,44 +31,23 @@ app.post("/schedule", async (req, res) => {
   const jobId = `${productId}-${Date.now()}`;
   const timer = setTimeout(async () => {
     try {
-      const getRes = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
-        headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
-      });
-      const product = await getRes.json();
-      if (!getRes.ok) { scheduledJobs.delete(jobId); return; }
+      // Try PUT first (full update), then PATCH (partial) if that fails
+      const tryPublish = async (method) => {
+        const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
+          method,
+          headers: { Authorization: `Bearer ${SQSP_KEY}`, "Content-Type": "application/json", "User-Agent": "ComicSync/1.0" },
+          body: JSON.stringify({ isVisible: true })
+        });
+        const body = await r.json().catch(() => ({}));
+        console.log(`[schedule] ${method} visibility → ${r.status}:`, JSON.stringify(body).slice(0, 200));
+        return r.ok;
+      };
 
-      // Publish the product
-      const patchRes = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${SQSP_KEY}`, "Content-Type": "application/json", "User-Agent": "ComicSync/1.0" },
-        body: JSON.stringify({ ...product, isVisible: true })
-      });
-      if (patchRes.ok) {
+      const ok = await tryPublish("PUT") || await tryPublish("PATCH");
+      if (ok) {
         console.log(`[schedule] Auto-published product ${productId} ✓`);
-        // Re-pin to top of store at publish time so it's always #1 when it goes live
-        if (storePageId) {
-          try {
-            const listRes = await fetch(
-              `https://api.squarespace.com/1.0/commerce/products?storePageId=${storePageId}&pageSize=200`,
-              { headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" } }
-            );
-            const listData = await listRes.json();
-            if (listRes.ok) {
-              const all = (listData.products || []).map(p => p.id);
-              const ordered = [productId, ...all.filter(id => id !== productId)];
-              await fetch(`https://api.squarespace.com/1.0/commerce/store_pages/${storePageId}/product_ordering`, {
-                method: "POST",
-                headers: { Authorization: `Bearer ${SQSP_KEY}`, "Content-Type": "application/json", "User-Agent": "ComicSync/1.0" },
-                body: JSON.stringify({ productIds: ordered }),
-              });
-              console.log(`[schedule] Product ${productId} pinned to top of store at publish time`);
-            }
-          } catch (reorderErr) {
-            console.warn(`[schedule] Reorder at publish time failed (non-fatal):`, reorderErr.message);
-          }
-        }
       } else {
-        console.error(`[schedule] Failed to publish:`, await patchRes.json());
+        console.error(`[schedule] All publish attempts failed for ${productId}`);
       }
     } catch (err) {
       console.error(`[schedule] Error:`, err.message);
@@ -125,59 +104,34 @@ app.post("/push", async (req, res) => {
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data.message || JSON.stringify(data) });
 
-    res.json({ success: true, productId: data.id, data });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    // --- NEW: SqaureSpace Reorder Hack ---
+    try {
+      console.log(`[push] Attempting to send product ${data.id} to top of store...`);
+      const reorderUrl = "https://rp-co.squarespace.com/api/content-service/product/1.1/websites/65f0daa76c615e0706f50fd9/products/65fa302391232642d07c17b1/reorder-items";
+      const reorderHeaders = {
+        'accept': 'application/json',
+        'content-type': 'application/json',
+        'cookie': 'SS_ANALYTICS_ID=7be6c7e7-9398-4baa-86a7-4b704fe6866c; _gcl_au=1.1.883033486.1767641073; _ga=GA1.1.1953302461.1767641073; _fbp=fb.1.1767641075504.518936450599139868; __stripe_mid=8c80f5e4-48b0-4917-b0bd-c30c41b916fc2d7a09; ss_i18n=%7B%22language%22%3A%22en-US%22%2C%22currency%22%3A%22USD%22%7D; IR_PI=bc29e449-eb23-11f0-b525-919900eae983%7C1767719915792; _pin_unauth=dWlkPU9XRXhPVFV6WmpJdE9XUmlPQzAwTlRZeExUZ3pOR1l0TVROa05HRTFNamRrTnprMQ; SS_MID=f318065f-c466-429b-a6b8-0b132aa75bd3iz8rxffc; cf_clearance=uHRy99muPPKbh0_Yy39.YRMZXNIhFaOL7eKP22K0w4Y-1767972018-1.2.1.1-rquJb6_wQ3B7WXLlKmWOP0uNBepiaraeMYu8Msg_Mi7dObWOr8OUOozt.bwl_C4l21j5Bt5JI.WdyjRNiMsQBzS1JLk.Wg__T0TZgVD3Md1OJR8fRj0EBymFlxLe2kqXyq_beJf3slaX4sZFcPJEg8qQHTfcOQ.s1ZWrvg86NvJ.wTM2hdtPX3VM_Tb0aiG1lT1SqtSLhWLRyDh.nD_IpRLyPBpF8m6xJ1V7HMtVOL0; _ga_E5RVG86DKP=GS2.1.s1767972017$o1$g1$t1767972054$j60$l0$h0; ai_terms=true; _pin_unauth=dWlkPU9XRXhPVFV6WmpJdE9XUmlPQzAwTlRZeExUZ3pOR1l0TVROa05HRTFNamRrTnprMQ; iterableEndUserId=adamwfish%40gmail.com; __ssid=f11a0723-8f7b-458c-b65f-906aa819490e; member-session=1|6190BIUSsjbspvrh/S84AKrTrnf4+YY69bt1EhFUvL/s|7KiShRXJD2ekrGLF6vH5+HTzyb6Aqt3qAXWYBbBM09g=; SS_SESSION_ID=12513fd3-0ce4-44b2-b4c1-d2c2683e28d9; IR_gbd=squarespace.com; notice_behavior=implied,us; crumb=ml71/hCYI1J6onpLKzgBPmF5RRnGyrS1QqKavmRTEt2D; seven_one_migration_preview_message_seen=; ss_lastid=eyJpZGVudGlmaWVyIjoicnAtY28ifQ%3D%3D; notice_behavior=implied,us; _rdt_uuid=1767719915948.28c87040-9b73-4a77-9a01-6923ae89855b; _rdt_em=a30606cae890c96207f73fa4cf2c2bbd186bce67e027791447ba447754fde85f; __stripe_sid=91e0e74f-e2ff-488d-9a0f-6134e84daed370cec1; TAsessionID=7a4cf402-bddd-4acd-af95-039e3edf16ea|NEW; _uetsid=6aef00f01b4d11f1a522dde1b3d106b4; _uetvid=29954480ea6c11f0a10ee75ab8747509; IR_9084=1773238703668%7C1332152%7C1773238703668%7C%7C; _ga_1L8CXRNJCG=GS2.1.s1773238688$o136$g1$t1773238780$j55$l0$h0; _ga_TWWC2ZW70V=GS2.1.s1773238700$o120$g1$t1773238851$j60$l0$h0',
+        'x-csrf-token': 'ml71/hCYI1J6onpLKzgBPmF5RRnGyrS1QqKavmRTEt2D',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+      };
 
-// ─── REORDER PRODUCT TO TOP ──────────────────────────────────────────────────
-// Moves productId to position 0 on the store page (top of listing).
-// Works when store sort is set to Manual in Squarespace.
-// Body: { productId: string, storePageId: string }
-app.post("/reorder", async (req, res) => {
-  if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
+      const reorderBody = JSON.stringify({
+        itemIds: [data.id],
+        insertAtIndex: 0
+      });
 
-  const { productId, storePageId } = req.body;
-  if (!productId || !storePageId) return res.status(400).json({ error: "productId and storePageId are required" });
-
-  try {
-    // Fetch current product list for the store page
-    const listRes = await fetch(
-      `https://api.squarespace.com/1.0/commerce/products?storePageId=${storePageId}&pageSize=200`,
-      { headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" } }
-    );
-    const listData = await listRes.json();
-    if (!listRes.ok) return res.status(listRes.status).json({ error: listData.message || JSON.stringify(listData) });
-
-    // Build ordered list: new product first, then all others
-    const all = (listData.products || []).map(p => p.id);
-    const others = all.filter(id => id !== productId);
-    const ordered = [productId, ...others];
-
-    // POST reordered list back to Squarespace
-    const reorderRes = await fetch(
-      `https://api.squarespace.com/1.0/commerce/store_pages/${storePageId}/product_ordering`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SQSP_KEY}`,
-          "Content-Type": "application/json",
-          "User-Agent": "ComicSync/1.0",
-        },
-        body: JSON.stringify({ productIds: ordered }),
+      const reorderRes = await fetch(reorderUrl, { method: 'POST', headers: reorderHeaders, body: reorderBody });
+      if (reorderRes.ok) {
+        console.log(`[push] Product ${data.id} successfully sent to center stage!`);
+      } else {
+        console.log(`[push] Failed to send product ${data.id} to top: ${reorderRes.status}`);
       }
-    );
-
-    if (reorderRes.ok || reorderRes.status === 204) {
-      console.log(`[reorder] Product ${productId} moved to top of store ${storePageId}`);
-      res.json({ success: true, position: 0 });
-    } else {
-      const err = await reorderRes.json().catch(() => ({}));
-      console.warn(`[reorder] Failed (${reorderRes.status}):`, err);
-      // Non-fatal — return partial success so the push still completes
-      res.json({ success: false, status: reorderRes.status, error: err.message || "Reorder not supported" });
+    } catch (err) {
+      console.error(`[push] Reorder Error:`, err.message);
     }
+
+    res.json({ success: true, productId: data.id, data });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
