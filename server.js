@@ -107,7 +107,7 @@ app.post("/push", async (req, res) => {
     // --- NEW: SqaureSpace Reorder Hack ---
     try {
       console.log(`[push] Attempting to send product ${data.id} to top of store...`);
-      const reorderUrl = "https://rp-co.squarespace.com/api/content-service/product/1.1/websites/65f0daa76c615e0706f50fd9/products/65fa302391232642d07c17b1/reorder-items";
+      const reorderUrl = "https://rp-co.squarespace.com/api/content-service/product/1.1/websites/65f0daa76c615e0706f50fd9/products/65fa302391232642d07c17b1/categories/65fa302391232642d07c17be/reorder-items";
       const reorderHeaders = {
         'accept': 'application/json',
         'content-type': 'application/json',
