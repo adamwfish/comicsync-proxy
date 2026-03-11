@@ -13,12 +13,8 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "25mb" }));
 
 // ─── SCHEDULED JOBS ──────────────────────────────────────────────────────────
-// In-memory map of pending auto-publish jobs.
-// Jobs are lost on proxy restart — fine for same-day scheduling.
 const scheduledJobs = new Map();
 
-// POST /schedule — schedule a product to auto-publish at a future time
-// Body: { productId: string, publishAt: ISO8601 string }
 app.post("/schedule", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { productId, publishAt, storePageId } = req.body;
@@ -31,7 +27,6 @@ app.post("/schedule", async (req, res) => {
   const jobId = `${productId}-${Date.now()}`;
   const timer = setTimeout(async () => {
     try {
-      // Try PUT first (full update), then PATCH (partial) if that fails
       const tryPublish = async (method) => {
         const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
           method,
@@ -42,7 +37,6 @@ app.post("/schedule", async (req, res) => {
         console.log(`[schedule] ${method} visibility → ${r.status}:`, JSON.stringify(body).slice(0, 200));
         return r.ok;
       };
-
       const ok = await tryPublish("PUT") || await tryPublish("PATCH");
       if (ok) {
         console.log(`[schedule] Auto-published product ${productId} ✓`);
@@ -60,7 +54,6 @@ app.post("/schedule", async (req, res) => {
   res.json({ jobId, productId, publishAt, delayMs: delay, storePageId });
 });
 
-// GET /scheduled — list all pending scheduled jobs
 app.get("/scheduled", (req, res) => {
   const jobs = [];
   for (const [jobId, job] of scheduledJobs.entries()) {
@@ -69,7 +62,6 @@ app.get("/scheduled", (req, res) => {
   res.json({ jobs });
 });
 
-// DELETE /schedule/:jobId — cancel a scheduled job
 app.delete("/schedule/:jobId", (req, res) => {
   const { jobId } = req.params;
   const job = scheduledJobs.get(jobId);
@@ -86,10 +78,8 @@ app.get("/", (req, res) => {
 });
 
 // ─── PUSH PRODUCT ──────────────────────────────────────────────────────────
-// Proxy POST → Squarespace Commerce API (create product)
 app.post("/push", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
-
   try {
     const response = await fetch("https://api.squarespace.com/1.0/commerce/products", {
       method: "POST",
@@ -100,11 +90,9 @@ app.post("/push", async (req, res) => {
       },
       body: JSON.stringify(req.body),
     });
-
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data.message || JSON.stringify(data) });
 
-    // --- NEW: SqaureSpace Reorder Hack ---
     try {
       console.log(`[push] Attempting to send product ${data.id} to top of store...`);
       const reorderUrl = "https://rp-co.squarespace.com/api/content-service/product/1.1/websites/65f0daa76c615e0706f50fd9/products/65fa302391232642d07c17b1/categories/65fa302391232642d07c17be/reorder-items";
@@ -115,12 +103,7 @@ app.post("/push", async (req, res) => {
         'x-csrf-token': 'ml71/hCYI1J6onpLKzgBPmF5RRnGyrS1QqKavmRTEt2D',
         'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
       };
-
-      const reorderBody = JSON.stringify({
-        itemIds: [data.id],
-        insertAtIndex: 0
-      });
-
+      const reorderBody = JSON.stringify({ itemIds: [data.id], insertAtIndex: 0 });
       const reorderRes = await fetch(reorderUrl, { method: 'POST', headers: reorderHeaders, body: reorderBody });
       if (reorderRes.ok) {
         console.log(`[push] Product ${data.id} successfully sent to center stage!`);
@@ -138,38 +121,23 @@ app.post("/push", async (req, res) => {
 });
 
 // ─── UPLOAD IMAGES ──────────────────────────────────────────────────────────
-// Accepts multipart: front (file), back (file), productId (string)
 app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]), async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
-
   const { productId } = req.body;
   if (!productId) return res.status(400).json({ error: "productId required" });
-
   const results = [];
   const files = [];
   if (req.files?.front?.[0]) files.push({ file: req.files.front[0], label: "front" });
   if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" });
-
   for (const { file, label } of files) {
     try {
       const form = new FormData();
-      form.append("file", file.buffer, {
-        filename: `${label}.jpg`,
-        contentType: file.mimetype || "image/jpeg",
+      form.append("file", file.buffer, { filename: `${label}.jpg`, contentType: file.mimetype || "image/jpeg" });
+      const imgRes = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}/images`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SQSP_KEY}`, ...form.getHeaders() },
+        body: form,
       });
-
-      const imgRes = await fetch(
-        `https://api.squarespace.com/1.0/commerce/products/${productId}/images`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${SQSP_KEY}`,
-            ...form.getHeaders(),
-          },
-          body: form,
-        }
-      );
-
       const imgData = await imgRes.json();
       if (!imgRes.ok) {
         results.push({ label, success: false, error: imgData.message || JSON.stringify(imgData) });
@@ -180,48 +148,33 @@ app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name
       results.push({ label, success: false, error: e.message });
     }
   }
-
   res.json({ results });
 });
 
 // ─── FETCH PRODUCTS ──────────────────────────────────────────────────────────
-// Fetch all products from inventory (paginated)
 app.get("/products", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { storePageId, cursor: startCursor } = req.query;
   try {
     let products = [];
     let cursor = startCursor || null;
-
-    // Fetch up to 5 pages (500 products) per request to avoid timeout
     let pages = 0;
     do {
       const url = cursor
         ? `https://api.squarespace.com/1.0/commerce/products?cursor=${cursor}&pageSize=100`
         : `https://api.squarespace.com/1.0/commerce/products?pageSize=100`;
-
-      const r = await fetch(url, {
-        headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
-      });
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" } });
       const data = await r.json();
       if (!r.ok) return res.status(r.status).json({ error: data.message || JSON.stringify(data) });
-
       for (const p of data.products || []) {
-        // Only include if storePageId matches (or no filter)
         const matchesPage = !storePageId || (p.storePageId === storePageId);
         if (matchesPage) {
           const variant = p.variants?.[0];
-          const price = variant?.pricing?.basePrice?.value || "0.00";
-          const sku = variant?.sku || "";
           products.push({
-            id: p.id,
-            name: p.name || "",
-            sku,
-            price,
-            tags: p.tags || [],
-            categories: p.categories || [],
-            isVisible: p.isVisible,
-            thumbnail: p.images?.[0]?.url || "",
+            id: p.id, name: p.name || "", sku: variant?.sku || "",
+            price: variant?.pricing?.basePrice?.value || "0.00",
+            tags: p.tags || [], categories: p.categories || [],
+            isVisible: p.isVisible, thumbnail: p.images?.[0]?.url || "",
             createdOn: p.createdOn || "",
           });
         }
@@ -229,7 +182,6 @@ app.get("/products", async (req, res) => {
       cursor = data.pagination?.nextPageCursor || null;
       pages++;
     } while (cursor && pages < 5);
-
     res.json({ products, nextCursor: cursor || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -237,111 +189,97 @@ app.get("/products", async (req, res) => {
 });
 
 // ─── SEARCH PROXY ────────────────────────────────────────────────────────────
-// Acts as a CORS bypass for the frontend Metron API calls
 app.post("/search", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL parameter is required" });
-
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "User-Agent": "ComicSync/1.0 (robopictocomics.com)"
-      }
-    });
-
+    const response = await fetch(url, { method: "GET", headers: { "User-Agent": "ComicSync/1.0 (robopictocomics.com)" } });
     const data = await response.json();
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data.detail || "Search API Error" });
-    }
-
+    if (!response.ok) return res.status(response.status).json({ error: data.detail || "Search API Error" });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ─── SEARCH PRODUCTS ─────────────────────────────────────────────────────────
-// Used by the Reprint Label modal — searches Squarespace inventory by SKU or title
-// GET /search-products?q=<query>&mode=sku|title
+// ─── SEARCH PRODUCTS (with 3-min in-memory cache) ────────────────────────────
+let _productCache = null;
+let _productCacheAt = 0;
+const CACHE_TTL_MS = 3 * 60 * 1000;
+
+async function getAllProducts(sqspKey) {
+  const now = Date.now();
+  if (_productCache && (now - _productCacheAt) < CACHE_TTL_MS) {
+    console.log(`[search-products] Cache hit (${_productCache.length} products, ${Math.round((now - _productCacheAt) / 1000)}s old)`);
+    return _productCache;
+  }
+  console.log(`[search-products] Cache miss — fetching from Squarespace...`);
+  const products = [];
+  let cursor = null;
+  do {
+    const url = cursor
+      ? `https://api.squarespace.com/1.0/commerce/products?cursor=${cursor}&pageSize=100`
+      : `https://api.squarespace.com/1.0/commerce/products?pageSize=100`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${sqspKey}`, "User-Agent": "ComicSync/1.0" } });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || JSON.stringify(data));
+    for (const p of data.products || []) {
+      const variant = p.variants?.[0];
+      products.push({
+        id: p.id, name: p.name || "",
+        sku: variant?.sku || "",
+        skuLower: (variant?.sku || "").toLowerCase(),
+        nameLower: (p.name || "").toLowerCase(),
+        price: variant?.pricing?.basePrice?.value || "0.00",
+        tags: p.tags || [], isVisible: p.isVisible,
+        thumbnail: p.images?.[0]?.url || "",
+      });
+    }
+    cursor = data.pagination?.nextPageCursor || null;
+  } while (cursor);
+  _productCache = products;
+  _productCacheAt = Date.now();
+  console.log(`[search-products] Cached ${products.length} products`);
+  return products;
+}
+
 app.get("/search-products", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { q, mode } = req.query;
   if (!q) return res.status(400).json({ error: "q (query) parameter is required" });
-
   const query = q.toLowerCase().trim();
   const searchMode = mode || "title";
-
   try {
-    let allProducts = [];
-    let cursor = null;
-
-    // Paginate through all products to find matches
-    do {
-      const url = cursor
-        ? `https://api.squarespace.com/1.0/commerce/products?cursor=${cursor}&pageSize=100`
-        : `https://api.squarespace.com/1.0/commerce/products?pageSize=100`;
-
-      const r = await fetch(url, {
-        headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
-      });
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json({ error: data.message || JSON.stringify(data) });
-
-      for (const p of data.products || []) {
-        const variant = p.variants?.[0];
-        const sku = (variant?.sku || "").toLowerCase();
-        const name = (p.name || "").toLowerCase();
-
-        const matches = searchMode === "sku"
-          ? sku.includes(query)
-          : name.includes(query);
-
-        if (matches) {
-          allProducts.push({
-            id: p.id,
-            name: p.name || "",
-            sku: variant?.sku || "",
-            price: variant?.pricing?.basePrice?.value || "0.00",
-            tags: p.tags || [],
-            isVisible: p.isVisible,
-            thumbnail: p.images?.[0]?.url || "",
-          });
-        }
-
-        // Cap results at 20 to keep response fast
-        if (allProducts.length >= 20) break;
-      }
-
-      cursor = data.pagination?.nextPageCursor || null;
-      if (allProducts.length >= 20) break;
-    } while (cursor);
-
-    res.json({ products: allProducts });
+    const all = await getAllProducts(SQSP_KEY);
+    const results = all
+      .filter(p => searchMode === "sku" ? p.skuLower.includes(query) : p.nameLower.includes(query))
+      .slice(0, 20)
+      .map(({ skuLower, nameLower, ...p }) => p);
+    res.json({ products: results, cached: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+app.delete("/cache", (req, res) => {
+  _productCache = null;
+  _productCacheAt = 0;
+  res.json({ cleared: true });
+});
+
 // ─── FETCH CATEGORIES ──────────────────────────────────────────────────────
-// Fetch store categories (unique tags across all products)
 app.get("/categories", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   try {
     let categories = [];
     let cursor = null;
-
     do {
       const url = cursor
         ? `https://api.squarespace.com/1.0/commerce/products?cursor=${cursor}&pageSize=100`
         : `https://api.squarespace.com/1.0/commerce/products?pageSize=100`;
-
-      const r = await fetch(url, {
-        headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
-      });
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" } });
       const data = await r.json();
       if (!r.ok) return res.status(r.status).json({ error: data.message || JSON.stringify(data) });
-
       for (const product of data.products || []) {
         for (const tag of product.tags || []) {
           if (!categories.includes(tag)) categories.push(tag);
@@ -349,7 +287,6 @@ app.get("/categories", async (req, res) => {
       }
       cursor = data.pagination?.nextPageCursor || null;
     } while (cursor);
-
     categories.sort();
     res.json({ categories });
   } catch (e) {
