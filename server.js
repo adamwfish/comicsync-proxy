@@ -41,22 +41,18 @@ function saveJobs(jobs) {
 }
 
 async function publishProduct(productId) {
-  const tryMethod = async (method) => {
-    const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${SQSP_KEY}`,
-        "Content-Type": "application/json",
-        "User-Agent": "ComicSync/1.0",
-      },
-      body: JSON.stringify({ isVisible: true }),
-    });
-    const body = await r.json().catch(() => ({}));
-    console.log(`[schedule] ${method} → ${r.status}:`, JSON.stringify(body).slice(0, 200));
-    return r.ok;
-  };
-  const ok = (await tryMethod("PUT")) || (await tryMethod("PATCH"));
-  return ok;
+  const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SQSP_KEY}`,
+      "Content-Type": "application/json",
+      "User-Agent": "ComicSync/1.0",
+    },
+    body: JSON.stringify({ isVisible: true }),
+  });
+  const body = await r.json().catch(() => ({}));
+  console.log(`[schedule] POST visibility → ${r.status}:`, JSON.stringify(body).slice(0, 200));
+  return r.ok;
 }
 
 // Poll every 30 seconds — check for any jobs that are due
