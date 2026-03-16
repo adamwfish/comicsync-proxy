@@ -3,6 +3,8 @@ import fetch from "node-fetch";
 import cors from "cors";
 import multer from "multer";
 import FormData from "form-data";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -12,72 +14,138 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "25mb" }));
 
-// ─── SCHEDULED JOBS ──────────────────────────────────────────────────────────
-const scheduledJobs = new Map();
+// ─── PERSISTENT JOB QUEUE ────────────────────────────────────────────────────
+// Jobs are written to disk so they survive Render restarts and sleep cycles.
+// A polling interval checks every 30s for any jobs that are due.
 
+const JOBS_FILE = path.join("/tmp", "scheduled_jobs.json");
+
+function loadJobs() {
+  try {
+    if (fs.existsSync(JOBS_FILE)) {
+      const raw = fs.readFileSync(JOBS_FILE, "utf8");
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error("[jobs] Failed to load jobs file:", e.message);
+  }
+  return {};
+}
+
+function saveJobs(jobs) {
+  try {
+    fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), "utf8");
+  } catch (e) {
+    console.error("[jobs] Failed to save jobs file:", e.message);
+  }
+}
+
+async function publishProduct(productId) {
+  const tryMethod = async (method) => {
+    const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${SQSP_KEY}`,
+        "Content-Type": "application/json",
+        "User-Agent": "ComicSync/1.0",
+      },
+      body: JSON.stringify({ isVisible: true }),
+    });
+    const body = await r.json().catch(() => ({}));
+    console.log(`[schedule] ${method} → ${r.status}:`, JSON.stringify(body).slice(0, 200));
+    return r.ok;
+  };
+  const ok = (await tryMethod("PUT")) || (await tryMethod("PATCH"));
+  return ok;
+}
+
+// Poll every 30 seconds — check for any jobs that are due
+setInterval(async () => {
+  if (!SQSP_KEY) return;
+  const jobs = loadJobs();
+  const now = Date.now();
+  let changed = false;
+
+  for (const [jobId, job] of Object.entries(jobs)) {
+    const publishTime = new Date(job.publishAt).getTime();
+    if (publishTime <= now) {
+      console.log(`[schedule] Job ${jobId} is due — publishing product ${job.productId}...`);
+      try {
+        const ok = await publishProduct(job.productId);
+        if (ok) {
+          console.log(`[schedule] ✓ Published product ${job.productId}`);
+        } else {
+          console.error(`[schedule] ✗ Failed to publish product ${job.productId}`);
+        }
+      } catch (err) {
+        console.error(`[schedule] Error publishing ${job.productId}:`, err.message);
+      }
+      delete jobs[jobId];
+      changed = true;
+    }
+  }
+
+  if (changed) saveJobs(jobs);
+}, 30 * 1000);
+
+console.log("[schedule] Polling scheduler started — checking every 30s");
+
+// ─── SCHEDULE ENDPOINT ───────────────────────────────────────────────────────
 app.post("/schedule", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { productId, publishAt, storePageId } = req.body;
   if (!productId || !publishAt) return res.status(400).json({ error: "productId and publishAt are required" });
+
   const delay = new Date(publishAt).getTime() - Date.now();
   if (delay <= 0) return res.status(400).json({ error: "Scheduled time is in the past" });
-  for (const [jid, job] of scheduledJobs.entries()) {
-    if (job.productId === productId) { clearTimeout(job.timer); scheduledJobs.delete(jid); }
-  }
-  const jobId = `${productId}-${Date.now()}`;
-  const timer = setTimeout(async () => {
-    try {
-      const tryPublish = async (method) => {
-        const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
-          method,
-          headers: { Authorization: `Bearer ${SQSP_KEY}`, "Content-Type": "application/json", "User-Agent": "ComicSync/1.0" },
-          body: JSON.stringify({ isVisible: true })
-        });
-        const body = await r.json().catch(() => ({}));
-        console.log(`[schedule] ${method} visibility → ${r.status}:`, JSON.stringify(body).slice(0, 200));
-        return r.ok;
-      };
-      const ok = await tryPublish("PUT") || await tryPublish("PATCH");
-      if (ok) {
-        console.log(`[schedule] Auto-published product ${productId} ✓`);
-      } else {
-        console.error(`[schedule] All publish attempts failed for ${productId}`);
-      }
-    } catch (err) {
-      console.error(`[schedule] Error:`, err.message);
-    } finally {
-      scheduledJobs.delete(jobId);
+
+  const jobs = loadJobs();
+
+  // Remove any existing job for this product
+  for (const [jid, job] of Object.entries(jobs)) {
+    if (job.productId === productId) {
+      delete jobs[jid];
+      console.log(`[schedule] Replaced existing job for product ${productId}`);
     }
-  }, delay);
-  scheduledJobs.set(jobId, { productId, publishAt, timer, storePageId });
-  console.log(`[schedule] Job queued — publishes at ${publishAt} (in ${Math.round(delay / 60000)} min)`);
+  }
+
+  const jobId = `${productId}-${Date.now()}`;
+  jobs[jobId] = { productId, publishAt, storePageId, createdAt: new Date().toISOString() };
+  saveJobs(jobs);
+
+  console.log(`[schedule] Job queued — product ${productId} publishes at ${publishAt} (in ${Math.round(delay / 60000)} min)`);
   res.json({ jobId, productId, publishAt, delayMs: delay, storePageId });
 });
 
 app.get("/scheduled", (req, res) => {
-  const jobs = [];
-  for (const [jobId, job] of scheduledJobs.entries()) {
-    jobs.push({ jobId, productId: job.productId, publishAt: job.publishAt });
-  }
-  res.json({ jobs });
+  const jobs = loadJobs();
+  const list = Object.entries(jobs).map(([jobId, job]) => ({
+    jobId,
+    productId: job.productId,
+    publishAt: job.publishAt,
+    storePageId: job.storePageId,
+    createdAt: job.createdAt,
+  }));
+  res.json({ jobs: list, count: list.length });
 });
 
 app.delete("/schedule/:jobId", (req, res) => {
   const { jobId } = req.params;
-  const job = scheduledJobs.get(jobId);
-  if (!job) return res.status(404).json({ error: "Job not found" });
-  clearTimeout(job.timer);
-  scheduledJobs.delete(jobId);
+  const jobs = loadJobs();
+  if (!jobs[jobId]) return res.status(404).json({ error: "Job not found" });
+  delete jobs[jobId];
+  saveJobs(jobs);
   console.log(`[schedule] Job ${jobId} cancelled`);
   res.json({ cancelled: true, jobId });
 });
 
-// ─── HEALTH CHECK ──────────────────────────────────────────────────────────
+// ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
-  res.json({ status: "ok", squarespace: !!SQSP_KEY, scheduledJobs: scheduledJobs.size });
+  const jobs = loadJobs();
+  res.json({ status: "ok", squarespace: !!SQSP_KEY, scheduledJobs: Object.keys(jobs).length });
 });
 
-// ─── PUSH PRODUCT ──────────────────────────────────────────────────────────
+// ─── PUSH PRODUCT ─────────────────────────────────────────────────────────────
 app.post("/push", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   try {
@@ -106,9 +174,9 @@ app.post("/push", async (req, res) => {
       const reorderBody = JSON.stringify({ itemIds: [data.id], insertAtIndex: 0 });
       const reorderRes = await fetch(reorderUrl, { method: 'POST', headers: reorderHeaders, body: reorderBody });
       if (reorderRes.ok) {
-        console.log(`[push] Product ${data.id} successfully sent to center stage!`);
+        console.log(`[push] Product ${data.id} successfully sent to top!`);
       } else {
-        console.log(`[push] Failed to send product ${data.id} to top: ${reorderRes.status}`);
+        console.log(`[push] Failed to reorder product ${data.id}: ${reorderRes.status}`);
       }
     } catch (err) {
       console.error(`[push] Reorder Error:`, err.message);
@@ -120,7 +188,7 @@ app.post("/push", async (req, res) => {
   }
 });
 
-// ─── UPLOAD IMAGES ──────────────────────────────────────────────────────────
+// ─── UPLOAD IMAGES ────────────────────────────────────────────────────────────
 app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]), async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { productId } = req.body;
@@ -151,7 +219,7 @@ app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name
   res.json({ results });
 });
 
-// ─── FETCH PRODUCTS ──────────────────────────────────────────────────────────
+// ─── FETCH PRODUCTS ───────────────────────────────────────────────────────────
 app.get("/products", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { storePageId, cursor: startCursor } = req.query;
@@ -188,7 +256,7 @@ app.get("/products", async (req, res) => {
   }
 });
 
-// ─── SEARCH PROXY ────────────────────────────────────────────────────────────
+// ─── SEARCH PROXY ─────────────────────────────────────────────────────────────
 app.post("/search", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL parameter is required" });
@@ -267,7 +335,7 @@ app.delete("/cache", (req, res) => {
   res.json({ cleared: true });
 });
 
-// ─── FETCH CATEGORIES ──────────────────────────────────────────────────────
+// ─── FETCH CATEGORIES ─────────────────────────────────────────────────────────
 app.get("/categories", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   try {
@@ -294,7 +362,7 @@ app.get("/categories", async (req, res) => {
   }
 });
 
-// ─── STORE PAGE CATEGORIES ──────────────────────────────────────────────────
+// ─── STORE PAGE CATEGORIES ────────────────────────────────────────────────────
 app.get("/store-categories", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { storePageId } = req.query;
