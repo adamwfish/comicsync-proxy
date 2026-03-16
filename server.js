@@ -12,41 +12,80 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "25mb" }));
 
-// ─── PUBLISH ENDPOINT ────────────────────────────────────────────────────────
-// Sets isVisible: true on an existing product.
-// Scheduling is handled client-side in ComicSync — the browser fires this
-// after the delay, which is more reliable than server-side timers on free-tier hosts.
+// ─── SCHEDULED JOBS ──────────────────────────────────────────────────────────
+// Server stays alive on paid Render tier — setTimeout is reliable for multi-day scheduling
 
-app.post("/publish", async (req, res) => {
+const scheduledJobs = new Map();
+
+async function publishProduct(productId) {
+  const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SQSP_KEY}`,
+      "Content-Type": "application/json",
+      "User-Agent": "ComicSync/1.0",
+    },
+    body: JSON.stringify({ isVisible: true }),
+  });
+  const body = await r.json().catch(() => ({}));
+  console.log(`[schedule] POST visibility → ${r.status}:`, JSON.stringify(body).slice(0, 200));
+  return r.ok;
+}
+
+app.post("/schedule", async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
-  const { productId } = req.body;
-  if (!productId) return res.status(400).json({ error: "productId is required" });
-  try {
-    const r = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${SQSP_KEY}`,
-        "Content-Type": "application/json",
-        "User-Agent": "ComicSync/1.0",
-      },
-      body: JSON.stringify({ isVisible: true }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      console.error(`[publish] Failed for ${productId} → ${r.status}:`, JSON.stringify(data).slice(0, 200));
-      return res.status(r.status).json({ error: data.message || `Squarespace error ${r.status}` });
+  const { productId, publishAt, storePageId, title } = req.body;
+  if (!productId || !publishAt) return res.status(400).json({ error: "productId and publishAt are required" });
+
+  const delay = new Date(publishAt).getTime() - Date.now();
+  if (delay <= 0) return res.status(400).json({ error: "Scheduled time is in the past" });
+
+  // Cancel any existing job for this product
+  for (const [jid, job] of scheduledJobs.entries()) {
+    if (job.productId === productId) {
+      clearTimeout(job.timer);
+      scheduledJobs.delete(jid);
     }
-    console.log(`[publish] ✓ Product ${productId} set to visible`);
-    res.json({ success: true, productId });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
   }
+
+  const jobId = `${productId}-${Date.now()}`;
+  const timer = setTimeout(async () => {
+    try {
+      const ok = await publishProduct(productId);
+      console.log(ok ? `[schedule] ✓ Published ${productId}` : `[schedule] ✗ Failed to publish ${productId}`);
+    } catch (err) {
+      console.error(`[schedule] Error publishing ${productId}:`, err.message);
+    } finally {
+      scheduledJobs.delete(jobId);
+    }
+  }, delay);
+
+  scheduledJobs.set(jobId, { jobId, productId, publishAt, storePageId, title: title || '', timer, queuedAt: new Date().toISOString() });
+  console.log(`[schedule] Job queued — "${title}" publishes at ${publishAt} (in ${Math.round(delay / 60000)} min)`);
+  res.json({ jobId, productId, publishAt, delayMs: delay });
+});
+
+app.get("/scheduled", (req, res) => {
+  const jobs = [];
+  for (const [, job] of scheduledJobs.entries()) {
+    jobs.push({ jobId: job.jobId, productId: job.productId, publishAt: job.publishAt, title: job.title, queuedAt: job.queuedAt });
+  }
+  res.json({ jobs, count: jobs.length });
+});
+
+app.delete("/schedule/:jobId", (req, res) => {
+  const { jobId } = req.params;
+  const job = scheduledJobs.get(jobId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  clearTimeout(job.timer);
+  scheduledJobs.delete(jobId);
+  console.log(`[schedule] Job ${jobId} cancelled`);
+  res.json({ cancelled: true, jobId });
 });
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
-  const jobs = loadJobs();
-  res.json({ status: "ok", squarespace: !!SQSP_KEY, scheduledJobs: Object.keys(jobs).length });
+  res.json({ status: "ok", squarespace: !!SQSP_KEY, scheduledJobs: scheduledJobs.size });
 });
 
 // ─── PUSH PRODUCT ─────────────────────────────────────────────────────────────
