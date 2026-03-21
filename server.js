@@ -132,7 +132,7 @@ app.post("/push", async (req, res) => {
 });
 
 // ─── UPLOAD IMAGES ────────────────────────────────────────────────────────────
-app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]), async (req, res) => {
+app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }, { name: "thumb", maxCount: 1 }]), async (req, res) => {
   if (!SQSP_KEY) return res.status(500).json({ error: "SQUARESPACE_API_KEY not set on server" });
   const { productId } = req.body;
   if (!productId) return res.status(400).json({ error: "productId required" });
