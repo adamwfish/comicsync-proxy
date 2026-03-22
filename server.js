@@ -138,8 +138,9 @@ app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name
   if (!productId) return res.status(400).json({ error: "productId required" });
   const results = [];
   const files = [];
-  if (req.files?.front?.[0]) files.push({ file: req.files.front[0], label: "front" });
-  if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" });
+ if (req.files?.thumb?.[0]) files.push({ file: req.files.thumb[0], label: "thumb" });
+if (req.files?.front?.[0]) files.push({ file: req.files.front[0], label: "front" });
+if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" });
   for (const { file, label } of files) {
     try {
       const form = new FormData();
