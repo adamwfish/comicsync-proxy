@@ -144,7 +144,7 @@ if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" })
   for (const { file, label } of files) {
     try {
       const form = new FormData();
-      form.append("file", file.buffer, { filename: `${label}.jpg`, contentType: file.mimetype || "image/jpeg" });
+      form.append("file", file.buffer, { filename: file.originalname || `${label}.jpg`, contentType: file.mimetype || "image/jpeg" });
       const imgRes = await fetch(`https://api.squarespace.com/1.0/commerce/products/${productId}/images`, {
         method: "POST",
         headers: { Authorization: `Bearer ${SQSP_KEY}`, ...form.getHeaders() },
