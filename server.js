@@ -104,6 +104,7 @@ app.post("/push", async (req, res) => {
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: data.message || JSON.stringify(data) });
 
+    // Attempt to send product to top of store
     try {
       console.log(`[push] Attempting to send product ${data.id} to top of store...`);
       const reorderUrl = "https://rp-co.squarespace.com/api/content-service/product/1.1/websites/65f0daa76c615e0706f50fd9/products/65fa302391232642d07c17b1/categories/65fa302391232642d07c17be/reorder-items";
@@ -138,9 +139,9 @@ app.post("/upload-images", upload.fields([{ name: "front", maxCount: 1 }, { name
   if (!productId) return res.status(400).json({ error: "productId required" });
   const results = [];
   const files = [];
- if (req.files?.thumb?.[0]) files.push({ file: req.files.thumb[0], label: "thumb" });
-if (req.files?.front?.[0]) files.push({ file: req.files.front[0], label: "front" });
-if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" });
+  if (req.files?.thumb?.[0]) files.push({ file: req.files.thumb[0], label: "thumb" });
+  if (req.files?.front?.[0]) files.push({ file: req.files.front[0], label: "front" });
+  if (req.files?.back?.[0]) files.push({ file: req.files.back[0], label: "back" });
   for (const { file, label } of files) {
     try {
       const form = new FormData();
@@ -193,7 +194,7 @@ app.get("/products", async (req, res) => {
       }
       cursor = data.pagination?.nextPageCursor || null;
       pages++;
-    } while (cursor && pages < 5);
+    } while (cursor && pages < 5); // fetches up to 500 items per call
     res.json({ products, nextCursor: cursor || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -265,7 +266,7 @@ app.get("/search-products", async (req, res) => {
     const all = await getAllProducts(SQSP_KEY);
     const results = all
       .filter(p => searchMode === "sku" ? p.skuLower.includes(query) : p.nameLower.includes(query))
-      .slice(0, 20)
+      // Removed the .slice(0, 20) limit so the deep scan gets every single matching product
       .map(({ skuLower, nameLower, ...p }) => p);
     res.json({ products: results, cached: true });
   } catch (e) {
@@ -349,4 +350,3 @@ app.post("/anthropic", async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`ComicSync proxy running on port ${PORT}`));
-
