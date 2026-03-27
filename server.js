@@ -375,11 +375,9 @@ app.get("/product-details", async (req, res) => {
       headers: { Authorization: `Bearer ${SQSP_KEY}`, "User-Agent": "ComicSync/1.0" }
     });
     if (!r.ok) return res.status(r.status).json({ error: `Squarespace error ${r.status}` });
-    const p = await r.json();
+    const raw = await r.json();
+const p = raw.products?.[0] || raw;
     // Log all top-level keys so we can see what Squarespace actually returns
-    console.log(`[product-details] keys for ${id}:`, Object.keys(p));
-    console.log(`[product-details] description:`, String(p.description || '').slice(0, 100));
-    console.log(`[product-details] body:`, String(p.body || '').slice(0, 100));
     const variant = p.variants?.[0];
     // Try every possible field name Squarespace might use for the HTML description
     const description = p.description || p.body || p.excerpt || p.descriptionHtml || p.htmlBody || p.content || "";
