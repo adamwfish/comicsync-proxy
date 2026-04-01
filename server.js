@@ -120,7 +120,7 @@ app.post("/push", async (req, res) => {
 // Session cookie expires when your Squarespace admin session expires (~30 days).
 const SQSP_SITE_HOST   = "rp-co.squarespace.com";
 const SQSP_WEBSITE_ID  = process.env.SQSP_WEBSITE_ID  || "65f0daa76c615e0706f50fd9";
-const SQSP_CATEGORY_ID = process.env.SQSP_CATEGORY_ID || "65fa302391232642d07c17ba";
+const SQSP_CATEGORY_ID = process.env.SQSP_CATEGORY_ID || "65fa302391232642d07c17be"; // ✅ fixed: was ...17ba
 
 app.post("/reorder", async (req, res) => {
   const { productId, storePageId, position } = req.body;
@@ -133,7 +133,7 @@ app.post("/reorder", async (req, res) => {
   const crumbMatch = sessionCookie.match(/crumb=([^;]+)/);
   const crumb = crumbMatch ? crumbMatch[1] : "";
 
-  const pageId = storePageId || SQSP_KEY; // fallback to store page from env
+  const pageId   = storePageId || "65fa302391232642d07c17b1"; // store page ID, not the API key
   const insertAt = (position !== undefined && position !== null) ? position : 0;
   const url = `https://${SQSP_SITE_HOST}/api/content-service/product/1.1/websites/${SQSP_WEBSITE_ID}/products/${pageId}/categories/${SQSP_CATEGORY_ID}/reorder-items`;
 
