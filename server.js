@@ -9,17 +9,23 @@ import fetch from "node-fetch";
 import cors from "cors";
 import multer from "multer";
 import FormData from "form-data";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const SQSP_KEY = process.env.SQUARESPACE_API_KEY;
-const upload = multer({ 
-  storage: multer.memoryStorage(), 
-  limits: { fileSize: 25 * 1024 * 1024 } 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }
 });
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "25mb" }));
+app.use(express.static(__dirname));
 
 // ─── SCHEDULED JOBS ──────────────────────────────────────────────────────────
 const scheduledJobs = new Map();
@@ -337,6 +343,157 @@ app.get("/product-details", async (req, res) => {
       thumbnail: p.images?.[0]?.url
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── HOMEPAGE WIDGET DATA ───────────────────────────────────────────────────
+const COMIC_FUN_FACTS = [
+  // Golden Age (1938-1956)
+  "Action Comics #1 (1938) featuring Superman is the most valuable comic book ever, worth over $6 million.",
+  "The first superhero appearance was Superman in 1938, created by Jerry Siegel and Joe Shuster.",
+  "Batman debuted in Detective Comics #27 (1939) and became DC's most popular character.",
+  "Wonder Woman was created in 1941 by William Moulton Marston as a feminist icon.",
+  "Captain America made his debut in Captain America Comics #1 (1941), before America entered WWII.",
+  "Timely Comics (now Marvel) published the first Human Torch in 1939.",
+  "The Incredible Hulk was created in 1962, but the Hulk origin story was retroactively set in Golden Age.",
+  "Golden Age comics were sold for 10 cents and came with a surprising amount of content.",
+  "Subversive Comic Book Hearings began in 1954, leading to the Comics Code Authority.",
+  "The Flash (Jay Garrick) first appeared in Flash Comics #1 (1940).",
+  "Green Lantern (Alan Scott) debuted in All American Comics #16 (1940) with a magical green lantern.",
+  "Hawkman made his first appearance in Flash Comics #1 (1940).",
+  "The Atom (Al Pratt) appeared in All American Comics #19 (1940), the first tiny hero.",
+  "Johnny Thunder debuted in Flash Comics #1 (1940) with a magical thunderbolt.",
+
+  // Silver Age (1956-1970)
+  "The Silver Age began in 1956 when The Flash was reinvented with a scientific origin.",
+  "Spider-Man was created in 1962 by Stan Lee and Steve Ditko, revolutionizing the hero archetype.",
+  "The X-Men first appeared in X-Men #1 (1963), pioneering the 'misunderstood heroes' concept.",
+  "Ant-Man debuted in Tales to Astonish #35 (1962), created by Stan Lee and Jack Kirby.",
+  "The Fantastic Four #1 (1961) launched the Silver Age of Marvel Comics.",
+  "Thor made his first appearance in Journey into Mystery #83 (1962).",
+  "The Hulk debuted in The Incredible Hulk #1 (1962), created by Stan Lee and Jack Kirby.",
+  "Iron Man first appeared in Tales of Suspense #39 (1963) during the Vietnam War.",
+  "Daredevil was created in 1964 by Stan Lee and artist Bill Everett.",
+  "Black Widow debuted as a villain in Tales of Suspense #52 (1964).",
+  "Doctor Strange appeared in Strange Tales #110 (1963), created by Stan Lee and Steve Ditko.",
+  "Silver Age comics cost 12 cents and featured full-color printing.",
+  "The Comics Code Authority relaxed restrictions in the 1960s, allowing more mature storylines.",
+  "Stan Lee's famous 'cameos' became a signature in Marvel Comics during the Silver Age.",
+  "Kirby's 'Kirby Krackle' technology-inspired visual effect became iconic in Silver Age comics.",
+  "Black Panther debuted in Fantastic Four #52 (1966), Marvel's first Black superhero.",
+  "The Inhumans were introduced in Fantastic Four #36 (1965).",
+  "Galactus, one of Marvel's most powerful beings, first appeared in Fantastic Four #48 (1966).",
+  "The Watcher first appeared in Fantastic Four #13 (1963) as an immortal observer of the universe.",
+  "Silver Surfer debuted in Fantastic Four #48 (1966), originally as Galactus's herald.",
+];
+
+// Rotate through fun facts with pagination
+let factIndex = 0;
+
+app.get("/widget/blog-latest", async (req, res) => {
+  try {
+    // Fetch latest post from 'derailed' blog
+    const response = await fetch("https://derailed.co/feed.json");
+    if (!response.ok) throw new Error("Failed to fetch blog");
+
+    const feed = await response.json();
+    const latestPost = feed.items?.[0] || null;
+
+    res.json({
+      success: true,
+      title: latestPost?.title || "Latest Post",
+      url: latestPost?.url || "#",
+      date: latestPost?.date_published || new Date().toISOString(),
+      excerpt: latestPost?.summary || "New post available",
+    });
+  } catch (e) {
+    res.json({
+      success: false,
+      title: "Blog Unavailable",
+      url: "#",
+      date: new Date().toISOString(),
+      excerpt: "Latest posts coming soon",
+    });
+  }
+});
+
+app.get("/widget/weather", async (req, res) => {
+  try {
+    // Using Open-Meteo (free, no API key required)
+    // Default to New York City, but can be changed with lat/lon params
+    const lat = req.query.lat || "40.7128";
+    const lon = req.query.lon || "-74.0060";
+
+    const response = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&timezone=auto`
+    );
+
+    if (!response.ok) throw new Error("Weather API error");
+
+    const data = await response.json();
+    const current = data.current;
+
+    // Map WMO weather codes to descriptions
+    const weatherDescriptions = {
+      0: "Clear",
+      1: "Mostly Clear",
+      2: "Partly Cloudy",
+      3: "Overcast",
+      45: "Foggy",
+      48: "Foggy",
+      51: "Light Drizzle",
+      53: "Drizzle",
+      55: "Heavy Drizzle",
+      61: "Light Rain",
+      63: "Rain",
+      65: "Heavy Rain",
+      71: "Light Snow",
+      73: "Snow",
+      75: "Heavy Snow",
+      80: "Rain Showers",
+      81: "Heavy Rain Showers",
+      82: "Violent Rain Showers",
+      85: "Snow Showers",
+      86: "Heavy Snow Showers",
+      95: "Thunderstorm",
+      96: "Thunderstorm with Hail",
+      99: "Thunderstorm with Hail",
+    };
+
+    res.json({
+      success: true,
+      temp: Math.round(current.temperature_2m),
+      condition: weatherDescriptions[current.weather_code] || "Unknown",
+      isDaytime: current.is_day,
+    });
+  } catch (e) {
+    res.json({
+      success: false,
+      temp: "--",
+      condition: "N/A",
+      isDaytime: true,
+    });
+  }
+});
+
+app.get("/widget/fun-facts", async (req, res) => {
+  const page = parseInt(req.query.page || "0");
+  const limit = 5; // Show 5 facts at a time
+
+  // Infinite cycle through facts
+  const startIdx = (page * limit) % COMIC_FUN_FACTS.length;
+  const facts = [];
+
+  for (let i = 0; i < limit; i++) {
+    facts.push(COMIC_FUN_FACTS[(startIdx + i) % COMIC_FUN_FACTS.length]);
+  }
+
+  res.json({
+    success: true,
+    facts,
+    page,
+    total: COMIC_FUN_FACTS.length,
+    hasMore: true, // Always has more (infinite)
+  });
 });
 
 app.listen(PORT, () => console.log(`ComicSync proxy v1.5 running on port ${PORT}`));
