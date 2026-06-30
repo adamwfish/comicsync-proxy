@@ -117,33 +117,48 @@
       document.getElementById('todayDate').textContent = formatDate(new Date());
     }
 
-    // Fetch blog post
+    // Fetch blog post from HTML
     async function fetchBlog() {
       try {
-        // Try robopictocomics blog feed
-        const response = await fetch('https://www.robopictocomics.com/the-picto-daily-digest?format=json');
-        if (!response.ok) throw new Error('Feed unavailable');
+        const response = await fetch('https://www.robopictocomics.com/the-picto-daily-digest');
+        if (!response.ok) throw new Error('Page unavailable');
 
-        const data = await response.json();
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
 
-        // Handle different feed formats
-        let latestPost = null;
-        if (data.items?.[0]) {
-          latestPost = data.items[0];
-        } else if (data.feed?.entry?.[0]) {
-          latestPost = data.feed.entry[0];
-        } else if (Array.isArray(data) && data[0]) {
-          latestPost = data[0];
+        // Look for post titles - try common selectors
+        let title = null;
+        let link = 'https://www.robopictocomics.com/the-picto-daily-digest';
+
+        // Try different selectors for blog post titles
+        const selectors = [
+          '.blog-item h2 a',
+          '.post-title a',
+          'article h2 a',
+          '.entry-title a',
+          'h2.post-title',
+          '.blog-title a',
+          '[class*="post"] h2 a',
+          'h2[class*="title"]',
+          'h2:first-of-type'
+        ];
+
+        for (const selector of selectors) {
+          const element = doc.querySelector(selector);
+          if (element && element.textContent.trim()) {
+            title = element.textContent.trim();
+            link = element.href || link;
+            break;
+          }
         }
 
-        if (latestPost) {
+        if (title) {
           const titleEl = document.getElementById('blogTitle');
           titleEl.className = 'blog-title';
-          const url = latestPost.url || latestPost.link || 'https://www.robopictocomics.com/the-picto-daily-digest';
-          const title = latestPost.title || latestPost.name || 'Latest Post';
-          titleEl.innerHTML = `<a href="${url}" target="_blank">${title}</a>`;
+          titleEl.innerHTML = `<a href="${link}" target="_blank">${title}</a>`;
         } else {
-          throw new Error('No posts found');
+          throw new Error('No post title found');
         }
       } catch (e) {
         console.error('Blog error:', e);
