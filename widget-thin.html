@@ -120,17 +120,28 @@
     // Fetch blog post
     async function fetchBlog() {
       try {
-        // Try derailed.co feed
-        const response = await fetch('https://derailed.co/feed.json');
+        // Try robopictocomics blog feed
+        const response = await fetch('https://www.robopictocomics.com/the-picto-daily-digest?format=json');
         if (!response.ok) throw new Error('Feed unavailable');
 
-        const feed = await response.json();
-        const latestPost = feed.items?.[0];
+        const data = await response.json();
+
+        // Handle different feed formats
+        let latestPost = null;
+        if (data.items?.[0]) {
+          latestPost = data.items[0];
+        } else if (data.feed?.entry?.[0]) {
+          latestPost = data.feed.entry[0];
+        } else if (Array.isArray(data) && data[0]) {
+          latestPost = data[0];
+        }
 
         if (latestPost) {
           const titleEl = document.getElementById('blogTitle');
           titleEl.className = 'blog-title';
-          titleEl.innerHTML = `<a href="${latestPost.url}" target="_blank">${latestPost.title}</a>`;
+          const url = latestPost.url || latestPost.link || 'https://www.robopictocomics.com/the-picto-daily-digest';
+          const title = latestPost.title || latestPost.name || 'Latest Post';
+          titleEl.innerHTML = `<a href="${url}" target="_blank">${title}</a>`;
         } else {
           throw new Error('No posts found');
         }
