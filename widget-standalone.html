@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RoboPictoComics Widget</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .widget {
+      max-width: 380px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 600px;
+    }
+
+    .widget-header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      align-items: center;
+      text-align: center;
+    }
+
+    .header-item {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .header-item .label {
+      font-size: 10px;
+      opacity: 0.8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .header-item .value {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 4px;
+    }
+
+    .header-item.date .value {
+      font-size: 14px;
+    }
+
+    .header-item.weather .value {
+      font-size: 14px;
+    }
+
+    .widget-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .section {
+      margin-bottom: 20px;
+      flex-shrink: 0;
+    }
+
+    .section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #667eea;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .blog-post {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 8px;
+      border-left: 3px solid #667eea;
+    }
+
+    .blog-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #222;
+      margin-bottom: 6px;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .blog-link {
+      font-size: 11px;
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 500;
+      display: inline-block;
+      margin-top: 6px;
+    }
+
+    .blog-link:hover {
+      text-decoration: underline;
+    }
+
+    .fun-facts-container {
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+
+    .fun-fact {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: #333;
+      border-left: 3px solid #764ba2;
+      flex-shrink: 0;
+    }
+
+    .fun-fact:last-child {
+      margin-bottom: 0;
+    }
+
+    .load-more {
+      text-align: center;
+      padding: 12px;
+      margin-top: 10px;
+    }
+
+    .load-more-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .load-more-btn:hover {
+      transform: scale(1.05);
+    }
+
+    .load-more-btn:active {
+      transform: scale(0.95);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 12px;
+      font-size: 11px;
+      color: #999;
+    }
+
+    /* Scrollbar styling */
+    .fun-facts-container::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .fun-facts-container::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .fun-facts-container::-webkit-scrollbar-thumb {
+      background: #ddd;
+      border-radius: 2px;
+    }
+
+    .fun-facts-container::-webkit-scrollbar-thumb:hover {
+      background: #ccc;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget">
+    <!-- Header: Date, Weather, Temperature -->
+    <div class="widget-header">
+      <div class="header-item date">
+        <div class="label">Today</div>
+        <div class="value" id="todayDate">--</div>
+      </div>
+      <div class="header-item weather">
+        <div class="label" id="weatherLabel">--</div>
+        <div class="value" id="weatherTemp">--°</div>
+      </div>
+      <div class="header-item">
+        <div class="label">Condition</div>
+        <div class="value" id="weatherCondition">--</div>
+      </div>
+    </div>
+
+    <!-- Content: Blog + Fun Facts -->
+    <div class="widget-content">
+      <!-- Latest Blog Post -->
+      <div class="section">
+        <div class="section-title">📰 Latest Post</div>
+        <div id="blogContainer" class="blog-post">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Comic Book Fun Facts -->
+      <div class="section" style="flex: 1; display: flex; flex-direction: column;">
+        <div class="section-title">⭐ Comic Book Fun Facts</div>
+        <div class="fun-facts-container" id="factsContainer">
+          <div class="loading">Loading fun facts...</div>
+        </div>
+        <div class="load-more">
+          <button class="load-more-btn" id="loadMoreBtn">Load More Facts</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const COMIC_FUN_FACTS = [
+      // Golden Age (1938-1956)
+      "Action Comics #1 (1938) featuring Superman is the most valuable comic book ever, worth over $6 million.",
+      "The first superhero appearance was Superman in 1938, created by Jerry Siegel and Joe Shuster.",
+      "Batman debuted in Detective Comics #27 (1939) and became DC's most popular character.",
+      "Wonder Woman was created in 1941 by William Moulton Marston as a feminist icon.",
+      "Captain America made his debut in Captain America Comics #1 (1941), before America entered WWII.",
+      "Timely Comics (now Marvel) published the first Human Torch in 1939.",
+      "The Incredible Hulk was created in 1962, but the Hulk origin story was retroactively set in Golden Age.",
+      "Golden Age comics were sold for 10 cents and came with a surprising amount of content.",
+      "Subversive Comic Book Hearings began in 1954, leading to the Comics Code Authority.",
+      "The Flash (Jay Garrick) first appeared in Flash Comics #1 (1940).",
+      "Green Lantern (Alan Scott) debuted in All American Comics #16 (1940) with a magical green lantern.",
+      "Hawkman made his first appearance in Flash Comics #1 (1940).",
+      "The Atom (Al Pratt) appeared in All American Comics #19 (1940), the first tiny hero.",
+      "Johnny Thunder debuted in Flash Comics #1 (1940) with a magical thunderbolt.",
+
+      // Silver Age (1956-1970)
+      "The Silver Age began in 1956 when The Flash was reinvented with a scientific origin.",
+      "Spider-Man was created in 1962 by Stan Lee and Steve Ditko, revolutionizing the hero archetype.",
+      "The X-Men first appeared in X-Men #1 (1963), pioneering the 'misunderstood heroes' concept.",
+      "Ant-Man debuted in Tales to Astonish #35 (1962), created by Stan Lee and Jack Kirby.",
+      "The Fantastic Four #1 (1961) launched the Silver Age of Marvel Comics.",
+      "Thor made his first appearance in Journey into Mystery #83 (1962).",
+      "The Hulk debuted in The Incredible Hulk #1 (1962), created by Stan Lee and Jack Kirby.",
+      "Iron Man first appeared in Tales of Suspense #39 (1963) during the Vietnam War.",
+      "Daredevil was created in 1964 by Stan Lee and artist Bill Everett.",
+      "Black Widow debuted as a villain in Tales of Suspense #52 (1964).",
+      "Doctor Strange appeared in Strange Tales #110 (1963), created by Stan Lee and Steve Ditko.",
+      "Silver Age comics cost 12 cents and featured full-color printing.",
+      "The Comics Code Authority relaxed restrictions in the 1960s, allowing more mature storylines.",
+      "Stan Lee's famous 'cameos' became a signature in Marvel Comics during the Silver Age.",
+      "Kirby's 'Kirby Krackle' technology-inspired visual effect became iconic in Silver Age comics.",
+      "Black Panther debuted in Fantastic Four #52 (1966), Marvel's first Black superhero.",
+      "The Inhumans were introduced in Fantastic Four #36 (1965).",
+      "Galactus, one of Marvel's most powerful beings, first appeared in Fantastic Four #48 (1966).",
+      "The Watcher first appeared in Fantastic Four #13 (1963) as an immortal observer of the universe.",
+      "Silver Surfer debuted in Fantastic Four #48 (1966), originally as Galactus's herald.",
+    ];
+
+    let currentFactPage = 0;
+
+    // ─── Format Date ─────────────────────────────────────────────────────
+    function formatDate(date) {
+      const options = { month: 'short', day: 'numeric', year: 'numeric' };
+      return date.toLocaleDateString('en-US', options);
+    }
+
+    // ─── Update Today's Date ──────────────────────────────────────────────
+    function updateDate() {
+      const today = new Date();
+      document.getElementById('todayDate').textContent = formatDate(today);
+    }
+
+    // ─── Fetch and Display Weather ────────────────────────────────────────
+    async function fetchWeather() {
+      try {
+        let lat = '40.7128';
+        let lon = '-74.0060';
+
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              lat = position.coords.latitude;
+              lon = position.coords.longitude;
+              loadWeatherData(lat, lon);
+            },
+            () => loadWeatherData(lat, lon)
+          );
+        } else {
+          loadWeatherData(lat, lon);
+        }
+      } catch (e) {
+        console.error('Weather fetch error:', e);
+      }
+    }
+
+    async function loadWeatherData(lat, lon) {
+      try {
+        const response = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day&timezone=auto`
+        );
+
+        if (!response.ok) throw new Error('Weather API error');
+
+        const data = await response.json();
+        const current = data.current;
+
+        const weatherDescriptions = {
+          0: "Clear",
+          1: "Mostly Clear",
+          2: "Partly Cloudy",
+          3: "Overcast",
+          45: "Foggy",
+          48: "Foggy",
+          51: "Light Drizzle",
+          53: "Drizzle",
+          55: "Heavy Drizzle",
+          61: "Light Rain",
+          63: "Rain",
+          65: "Heavy Rain",
+          71: "Light Snow",
+          73: "Snow",
+          75: "Heavy Snow",
+          80: "Rain Showers",
+          81: "Heavy Rain Showers",
+          82: "Violent Rain Showers",
+          85: "Snow Showers",
+          86: "Heavy Snow Showers",
+          95: "Thunderstorm",
+          96: "Thunderstorm with Hail",
+          99: "Thunderstorm with Hail",
+        };
+
+        document.getElementById('weatherTemp').textContent = `${Math.round(current.temperature_2m)}°`;
+        document.getElementById('weatherCondition').textContent = weatherDescriptions[current.weather_code] || "Unknown";
+        document.getElementById('weatherLabel').textContent = current.is_day ? '☀️' : '🌙';
+      } catch (e) {
+        console.error('Weather error:', e);
+      }
+    }
+
+    // ─── Fetch and Display Latest Blog Post ────────────────────────────────
+    async function fetchBlog() {
+      try {
+        const response = await fetch('https://derailed.co/feed.json');
+        if (!response.ok) throw new Error("Failed to fetch blog");
+
+        const feed = await response.json();
+        const latestPost = feed.items?.[0] || null;
+
+        let html = '';
+        if (latestPost) {
+          html = `
+            <div class="blog-title">${latestPost.title}</div>
+            <a href="${latestPost.url}" target="_blank" rel="noopener noreferrer" class="blog-link">Read →</a>
+          `;
+        } else {
+          html = '<div style="color: #999; font-size: 12px;">No posts available</div>';
+        }
+
+        document.getElementById('blogContainer').innerHTML = html;
+      } catch (e) {
+        console.error('Blog fetch error:', e);
+        document.getElementById('blogContainer').innerHTML =
+          '<div style="color: #999; font-size: 12px;">Failed to load blog</div>';
+      }
+    }
+
+    // ─── Display Fun Facts ────────────────────────────────────────────────
+    function displayFunFacts(page = 0) {
+      const limit = 5;
+      const startIdx = (page * limit) % COMIC_FUN_FACTS.length;
+      const facts = [];
+
+      for (let i = 0; i < limit; i++) {
+        facts.push(COMIC_FUN_FACTS[(startIdx + i) % COMIC_FUN_FACTS.length]);
+      }
+
+      const container = document.getElementById('factsContainer');
+      const html = facts
+        .map((fact) => `<div class="fun-fact">${fact}</div>`)
+        .join('');
+
+      if (page === 0) {
+        container.innerHTML = html;
+      } else {
+        container.innerHTML += html;
+      }
+
+      currentFactPage = page + 1;
+    }
+
+    // ─── Load More Button Handler ────────────────────────────────────────
+    document.getElementById('loadMoreBtn').addEventListener('click', () => {
+      displayFunFacts(currentFactPage);
+      // Scroll to show new facts
+      setTimeout(() => {
+        document.querySelector('.fun-facts-container').scrollTop =
+          document.querySelector('.fun-facts-container').scrollHeight;
+      }, 100);
+    });
+
+    // ─── Initialize ─────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      updateDate();
+      fetchWeather();
+      fetchBlog();
+      displayFunFacts(0);
+
+      // Refresh blog and weather every 60 minutes
+      setInterval(fetchBlog, 60 * 60 * 1000);
+      setInterval(fetchWeather, 60 * 60 * 1000);
+    });
+  </script>
+</body>
+</html>
